@@ -62,7 +62,8 @@ Get the latest release from the [releases page](https://github.com/fsiuhgshiqoih
 - **macOS.** The app is ad-hoc signed, not notarized. The first time, right-click it and choose
   *Open* (or run `xattr -dr com.apple.quarantine Snapsmith.app`). Allow Snapsmith in System
   Settings > Privacy & Security > Screen Recording when asked, then start it again.
-- **Linux.** On Debian and Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1`.
+- **Linux.** On Debian and Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libxkbcommon-x11-0`
+  (most desktops already have them).
   Copy `snapsmith` somewhere on your `PATH` and `snapsmith.desktop` to
   `~/.local/share/applications/` if you want a menu entry.
 
