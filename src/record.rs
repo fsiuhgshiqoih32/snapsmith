@@ -412,7 +412,7 @@ fn control_bar(shared: Arc<Shared>, area: DesktopRect, format: Format) -> Result
         .with_always_on_top()
         .with_taskbar(false)
         .with_inner_size(vec2(BAR_W, BAR_H));
-    crate::app::run_window("Snapsmith - Recording", viewport, true, |_cc| Bar {
+    crate::app::run_window("Snapsmith - Recording", viewport, crate::app::Kind::Accessory, |_cc| Bar {
         shared: shared.clone(),
         area,
         format,

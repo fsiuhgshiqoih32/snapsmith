@@ -142,8 +142,11 @@ history and default saves in one folder, for a portable copy.
 
 On Windows, Snapsmith keeps one small hidden window ready so the selection appears the moment
 you press a shortcut (about a tenth of a second). Set `SNAPSMITH_STANDBY=0` to turn that off, or
-`SNAPSMITH_STANDBY=1` to try it on macOS or Linux (X11). Windows open with OpenGL and fall back
-to wgpu; `SNAPSMITH_RENDERER=wgpu` forces wgpu.
+`SNAPSMITH_STANDBY=1` to try it on macOS or Linux (X11). Small windows open with OpenGL and fall
+back to wgpu. On Windows the full-screen selection uses wgpu (DX12): drivers may show a
+full-screen OpenGL window directly, bypassing Windows' compositor, which makes HDR and
+variable-refresh monitors go black while they switch modes. `SNAPSMITH_RENDERER=wgpu|glow`
+forces one renderer for every window.
 
 ## Building
 

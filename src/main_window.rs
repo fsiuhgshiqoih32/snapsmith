@@ -85,7 +85,7 @@ fn run(page: Page, demo: Option<PathBuf>, lock: single_instance::InstanceLock) -
         .with_min_inner_size(vec2(720.0, 460.0))
         .with_drag_and_drop(true);
     let mut lock = Some(lock);
-    crate::app::run_window("Snapsmith", viewport, false, |cc| {
+    crate::app::run_window("Snapsmith", viewport, crate::app::Kind::Normal, |cc| {
         MainWindow::new(cc, page, demo.clone(), lock.take().expect("window built once"))
     })
     .map_err(|e| format!("could not open the window: {e}"))

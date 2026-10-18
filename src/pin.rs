@@ -31,8 +31,14 @@ pub fn run(path: &Path, at: Option<DesktopRect>, delete_after_load: bool) -> Res
         .with_taskbar(false)
         .with_resizable(false)
         .with_inner_size(logical);
+    // A pin as large as its monitor covers it, which needs the full-screen renderer.
+    let monitor = at.and_then(|r| xcap::Monitor::from_point(r.x, r.y).ok());
+    let covers = monitor
+        .and_then(|m| Some((m.width().ok()?, m.height().ok()?)))
+        .is_some_and(|(w, h)| image.width() >= w && image.height() >= h);
+    let kind = if covers { crate::app::Kind::FullScreen } else { crate::app::Kind::Accessory };
     let mut image = Some(image);
-    crate::app::run_window("Snapsmith - Pin", viewport, true, |_cc| Pin {
+    crate::app::run_window("Snapsmith - Pin", viewport, kind, |_cc| Pin {
         image: image.take().expect("pin built once"),
         source: source.clone(),
         at,

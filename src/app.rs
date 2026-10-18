@@ -8,9 +8,20 @@ use image::RgbaImage;
 
 use snapsmith::config::ImageFormat;
 
-/// eframe options for one of our windows. `accessory` windows (overlay, notifications, pins)
-/// don't put an icon in the macOS Dock.
-pub fn native_options_ext(viewport: egui::ViewportBuilder, accessory: bool) -> eframe::NativeOptions {
+/// What a window is, which decides its macOS Dock icon and its renderer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    /// A regular window with a Dock icon (main window, editor).
+    Normal,
+    /// No Dock icon: notifications, pins, the text and recording windows.
+    Accessory,
+    /// Covers a whole monitor (the selection and its standby); no Dock icon.
+    FullScreen,
+}
+
+/// eframe options for one of our windows.
+fn native_options(viewport: egui::ViewportBuilder, kind: Kind) -> eframe::NativeOptions {
+    let accessory = kind != Kind::Normal;
     eframe::NativeOptions {
         viewport: viewport.with_icon(crate::ui::app_icon()),
         centered: false,
@@ -60,12 +71,18 @@ fn fast_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
 /// the time DX12/Vulkan takes (drivers cache compiled shaders; wgpu recompiles every launch);
 /// wgpu is the fallback for machines without a usable OpenGL (VMs, remote desktops). macOS uses
 /// Metal through wgpu. `SNAPSMITH_RENDERER=glow|wgpu` overrides.
-fn renderers() -> Vec<eframe::Renderer> {
+///
+/// Full-screen windows on Windows use DX12: GPU drivers may present an OpenGL window that covers
+/// a monitor straight to the screen, bypassing the compositor (NVIDIA's does), and on an HDR or
+/// variable-refresh display that switches the monitor's mode, which blanks it for a second or
+/// two. DX12 windows stay composed. Its slower start is paid ahead of time by the standby window.
+fn renderers(kind: Kind) -> Vec<eframe::Renderer> {
     use eframe::Renderer::{Glow, Wgpu};
     match std::env::var("SNAPSMITH_RENDERER").unwrap_or_default().to_ascii_lowercase().as_str() {
         "wgpu" => vec![Wgpu],
         "glow" => vec![Glow, Wgpu],
         _ if cfg!(target_os = "macos") => vec![Wgpu, Glow],
+        _ if cfg!(windows) && kind == Kind::FullScreen => vec![Wgpu, Glow],
         _ => vec![Glow, Wgpu],
     }
 }
@@ -76,22 +93,22 @@ fn renderers() -> Vec<eframe::Renderer> {
 pub fn run_window<A: eframe::App + 'static>(
     title: &str,
     viewport: egui::ViewportBuilder,
-    accessory: bool,
+    kind: Kind,
     mut make: impl FnMut(&eframe::CreationContext<'_>) -> A,
 ) -> Result<(), String> {
-    run_window_try(title, viewport, accessory, |cc| Ok(make(cc)))
+    run_window_try(title, viewport, kind, |cc| Ok(make(cc)))
 }
 
 /// [`run_window`] where building the app can fail; the error is returned.
 pub fn run_window_try<A: eframe::App + 'static>(
     title: &str,
     viewport: egui::ViewportBuilder,
-    accessory: bool,
+    kind: Kind,
     mut make: impl FnMut(&eframe::CreationContext<'_>) -> Result<A, String>,
 ) -> Result<(), String> {
     let mut last = String::from("no renderer available");
-    for renderer in renderers() {
-        let mut options = native_options_ext(viewport.clone(), accessory);
+    for renderer in renderers(kind) {
+        let mut options = native_options(viewport.clone(), kind);
         options.renderer = renderer;
         let created = std::cell::Cell::new(false);
         let result = eframe::run_native(

@@ -37,7 +37,7 @@ pub fn run(
         .with_inner_size(size)
         .with_min_inner_size(vec2(640.0, 360.0));
     let image = Arc::new(image);
-    crate::app::run_window(&title, viewport, false, |cc| {
+    crate::app::run_window(&title, viewport, crate::app::Kind::Normal, |cc| {
         let mut canvas = Canvas::new(image.clone(), cc.egui_ctx.pixels_per_point());
         canvas.nearest = false;
         Editor {

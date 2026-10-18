@@ -1,6 +1,6 @@
 //! A warm selection window, for an instant start.
 //!
-//! Opening a window and its renderer from scratch takes about a quarter of a second. So the
+//! Opening a full-screen window and its renderer from scratch takes about half a second. So the
 //! background process (and the main window) keep one `snapsmith standby` process waiting with
 //! its window already created and hidden. A shortcut sends it one line on stdin, such as
 //! `record --gif`; it then grabs the screen, paints the selection while still hidden, shows it,
@@ -181,7 +181,7 @@ pub fn run() -> Result<(), String> {
     let outcome: Arc<Mutex<Outcome>> = Arc::default();
     let out = outcome.clone();
     let mut rx = Some(rx);
-    crate::app::run_window("Snapsmith", viewport, true, |cc| {
+    crate::app::run_window("Snapsmith", viewport, crate::app::Kind::FullScreen, |cc| {
         *ctx_slot.lock().unwrap() = Some(cc.egui_ctx.clone());
         Standby { rx: rx.take().expect("standby built once"), state: State::Waiting, outcome: out.clone(), frames: 0 }
     })?;

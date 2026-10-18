@@ -69,6 +69,9 @@ impl<W: Write> GifWriter<W> {
     fn flush_pending(&mut self) -> Result<(), String> {
         if let Some(f) = self.pending.take() {
             self.encoder.write_frame(&f).map_err(|e| e.to_string())?;
+            // Each frame reaches the file at once, so a recording cut short (the computer shut
+            // down, the process killed) still plays up to there.
+            self.encoder.get_mut().flush().map_err(|e| e.to_string())?;
             self.frames_written += 1;
         }
         Ok(())
@@ -167,6 +170,26 @@ mod tests {
         assert!(red[0] > 150 && red[1] < 90, "{red:?}");
         let bg = canvas.get_pixel(2, 20).0;
         assert!(bg[0] > 200 && bg[1] > 200, "{bg:?}");
+    }
+
+    #[test]
+    fn cut_short_recording_still_plays() {
+        // A large buffer that would hold everything if frames weren't flushed one by one.
+        let out = std::io::BufWriter::with_capacity(1 << 20, Vec::new());
+        let mut w = GifWriter::new(out, 16, 16).unwrap();
+        for i in 0..3u8 {
+            w.add(&RgbaImage::from_pixel(16, 16, image::Rgba([i * 80, 0, 0, 255])), 100).unwrap();
+        }
+        // As if the process died now: what reached the file, plus a trailer.
+        let mut bytes = w.encoder.get_ref().get_ref().clone();
+        bytes.push(0x3B);
+        let mut dec = gif::DecodeOptions::new().read_info(std::io::Cursor::new(bytes)).unwrap();
+        let mut frames = 0;
+        while dec.read_next_frame().unwrap().is_some() {
+            frames += 1;
+        }
+        // The third frame waits to learn its duration; the first two are on disk.
+        assert_eq!(frames, 2);
     }
 
     #[test]

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- Fixed the screen going black for a moment when the selection opened or closed (screenshots,
+  GIF and MP4 recording) on Windows with an HDR or variable-refresh monitor. With OpenGL, the
+  graphics driver showed the full-screen selection directly instead of through Windows'
+  compositor, which made such monitors switch modes. Full-screen windows now use DX12 on
+  Windows; small windows keep OpenGL. Shortcuts still show the selection in under a tenth of a
+  second; one started from scratch takes about half a second (a third with OpenGL).
+- GIF recordings are written to disk frame by frame, so one cut short (the computer shut down
+  mid-recording) still plays up to that point.
+
 ## 0.1.1
 
 - Much faster start. On Windows the selection now appears about a tenth of a second after a

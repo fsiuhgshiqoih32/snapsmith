@@ -28,7 +28,7 @@ pub fn run(image: RgbaImage) -> Result<(), String> {
         .with_min_inner_size(vec2(360.0, 220.0))
         .with_always_on_top();
     let image = Arc::new(image);
-    crate::app::run_window("Snapsmith - Text", viewport, true, |cc| {
+    crate::app::run_window("Snapsmith - Text", viewport, crate::app::Kind::Accessory, |cc| {
         let mut app = OcrApp { image: image.clone(), state: State::AskDownload, frame_no: 0 };
         if ocr::models_present(&ocr::models_dir()) {
             app.start_reading(&cc.egui_ctx);

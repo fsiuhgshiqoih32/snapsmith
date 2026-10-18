@@ -38,7 +38,7 @@ pub fn run(toast: Toast, rx: Receiver<Progress>) -> Result<(), String> {
         .with_active(false)
         .with_inner_size(vec2(W, H));
     let mut parts = Some((toast, rx));
-    crate::app::run_window("Snapsmith", viewport, true, |_cc| {
+    crate::app::run_window("Snapsmith", viewport, crate::app::Kind::Accessory, |_cc| {
         let (toast, rx) = parts.take().expect("notification built once");
         ToastApp::new(toast, rx)
     })

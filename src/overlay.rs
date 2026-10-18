@@ -101,7 +101,7 @@ pub fn run_source(
         .with_inner_size(vec2(rect.w as f32 / monitor_scale, rect.h as f32 / monitor_scale));
     crate::log::timing("overlay starting");
     let mut source = Some(source);
-    crate::app::run_window_try("Snapsmith", viewport, true, |_cc| {
+    crate::app::run_window_try("Snapsmith", viewport, crate::app::Kind::FullScreen, |_cc| {
         let shot = source.take().ok_or("overlay built twice")?.get()?;
         Ok(Overlay::new(shot, mode, magnifier, script.clone(), out.clone()))
     })
@@ -215,6 +215,9 @@ impl Overlay {
     ) -> Self {
         let scale = shot.scale;
         let canvas = Canvas::new(Arc::new(shot.image), scale);
+        // For tests: `SNAPSMITH_TEST_PICK` selects and confirms without a user, however the
+        // overlay was started (the standby included).
+        let script = script.or_else(|| std::env::var_os("SNAPSMITH_TEST_PICK").map(|_| Script::default()));
         Overlay {
             rect: shot.rect,
             scale,

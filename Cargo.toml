@@ -1,6 +1,6 @@
 [package]
 name = "snapsmith"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.95"
 description = "Screenshots, annotation, uploads, OCR and GIF recording for Windows, macOS and Linux. ShareX-style workflows, .sxcu uploaders."
