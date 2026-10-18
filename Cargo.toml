@@ -1,0 +1,79 @@
+[package]
+name = "snapsmith"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "Screenshots, annotation, uploads, OCR and GIF recording for Windows, macOS and Linux. ShareX-style workflows, .sxcu uploaders."
+license = "MIT"
+repository = "https://github.com/fsiuhgshiqoih32/snapsmith"
+readme = "README.md"
+keywords = ["screenshot", "sharex", "screen-capture", "annotation", "ocr"]
+categories = ["gui", "multimedia::images"]
+
+[dependencies]
+ab_glyph = "0.2"
+arboard = { version = "3.7", features = ["wayland-data-control"] }
+auto-launch = "0.6"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+eframe = "0.37"
+epaint_default_fonts = "0.37"
+fastrand = "2"
+flate2 = "1"
+gif = "0.14"
+global-hotkey = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
+ocrs = "0.13"
+opener = { version = "0.9", features = ["reveal"] }
+regex = "1"
+rfd = "0.15"
+rten = "0.26"
+self-replace = "1.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tao = "0.37"
+tar = "0.4"
+tiny-skia = "0.11"
+toml = "1"
+tray-icon = "0.26"
+ureq = { version = "3", features = ["json"] }
+winit = "0.30"
+xcap = "0.9"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_System_Console",
+    "Win32_System_Registry",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-core-graphics = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4"
+x11rb = "0.13"
+
+[build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tiny_http = "0.12"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2

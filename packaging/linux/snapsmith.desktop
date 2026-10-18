@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Snapsmith
+Comment=Screenshots, annotation, uploads, text recognition and GIF recording
+Exec=snapsmith
+Icon=snapsmith
+Terminal=false
+Categories=Utility;Graphics;
+Keywords=screenshot;capture;sharex;annotate;upload;ocr;gif;
+StartupWMClass=snapsmith
+Actions=region;screen;
+
+[Desktop Action region]
+Name=Capture region
+Exec=snapsmith capture region
+
+[Desktop Action screen]
+Name=Capture screen
+Exec=snapsmith capture screen
