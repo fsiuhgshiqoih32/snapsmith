@@ -36,7 +36,7 @@ pub fn export(base: &RgbaImage, ops: &[Op], crop: Option<(u32, u32, u32, u32)>) 
 
 fn to_pixmap(img: &RgbaImage) -> Pixmap {
     let mut data = img.as_raw().clone();
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a != 255 {
             px[0] = ((px[0] as u32 * a + 127) / 255) as u8;
@@ -50,7 +50,7 @@ fn to_pixmap(img: &RgbaImage) -> Pixmap {
 
 fn from_pixmap(pm: &Pixmap) -> RgbaImage {
     let mut data = pm.data().to_vec();
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a != 255 && a != 0 {
             px[0] = ((px[0] as u32 * 255 + a / 2) / a).min(255) as u8;

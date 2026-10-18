@@ -49,7 +49,7 @@ Get the latest release from the [releases page](https://github.com/fsiuhgshiqoih
 | Windows 10/11 (x64) | `snapsmith-vX.Y.Z-windows-x64.zip` | Unzip and run `snapsmith.exe`. |
 | Windows on ARM | `snapsmith-vX.Y.Z-windows-arm64.zip` | |
 | macOS 11+ (Apple silicon and Intel) | `snapsmith-vX.Y.Z-macos.zip` | Contains `Snapsmith.app`. |
-| Linux x86_64 | `snapsmith-vX.Y.Z-linux-x86_64.tar.gz` | Needs GTK 3 and libayatana-appindicator for the tray. |
+| Linux x86_64 | `snapsmith-vX.Y.Z-linux-x86_64.tar.gz` | glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 and later). Needs GTK 3, and libayatana-appindicator for the tray. |
 
 `SHA256SUMS.txt` lists the checksums.
 

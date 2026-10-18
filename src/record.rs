@@ -400,7 +400,7 @@ fn cursor_sprite(scale: f32) -> RgbaImage {
         pm.stroke_path(&path, &p, &Stroke { width: 1.3 * s, ..Default::default() }, Transform::identity(), None);
     }
     let mut data = pm.take();
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a != 0 && a != 255 {
             for c in &mut px[..3] {

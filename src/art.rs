@@ -68,7 +68,7 @@ fn draw(size: usize, template: bool, recording: bool) -> Vec<u8> {
     }
 
     let mut data = pm.take();
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a != 0 && a != 255 {
             for c in &mut px[..3] {
