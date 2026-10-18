@@ -20,9 +20,8 @@ use snapsmith::naming::{self, NameContext};
 
 use crate::commands;
 use crate::log::{info, warning};
-use crate::overlay::{self, Mode};
+use crate::overlay;
 use crate::platform::{self, DesktopRect};
-use crate::single_instance;
 use crate::tasks::Progress;
 use crate::toast::{self, Toast};
 use crate::ui;
@@ -53,46 +52,39 @@ pub fn request_stop() {
 }
 
 pub fn command(mp4: bool, stop: bool) -> Result<(), String> {
-    if stop || single_instance::is_held(single_instance::RECORDING) {
+    if stop {
         request_stop();
         return Ok(());
-    }
-    let Some(_lock) = single_instance::acquire(single_instance::RECORDING)? else {
-        request_stop();
-        return Ok(());
-    };
-    let _ = std::fs::remove_file(stop_file());
-    let settings = commands::load_settings();
-    if platform::is_wayland() {
-        return Err("Screen recording isn't available on Wayland yet: the desktop asks for permission on every \
-                    frame. It works in an X11 session."
-            .into());
-    }
-    if !platform::screen_capture_allowed() && !platform::request_screen_capture() {
-        return Err("Snapsmith needs permission to record the screen (System Settings > Privacy & Security > \
-                    Screen Recording)."
-            .into());
     }
     let format = if mp4 { Format::Mp4 } else { Format::Gif };
-    let ffmpeg = match format {
-        Format::Mp4 => Some(find_ffmpeg(&settings)?),
-        Format::Gif => None,
-    };
+    let action = commands::AreaAction::Record(format);
+    // For tests: record a fixed area without the picker.
+    if let Some(area) = std::env::var("SNAPSMITH_TEST_AREA").ok().and_then(|s| parse_area(&s)) {
+        let Some(prep) = commands::prepare(action, commands::CaptureOptions::default())? else { return Ok(()) };
+        let (cx, cy) = area.center();
+        let monitor = xcap::Monitor::from_point(cx, cy).map_err(|e| e.to_string())?;
+        let mon_rect = crate::capture::monitor_rect(&monitor)?;
+        let picked = overlay::Picked {
+            image: RgbaImage::new(area.w, area.h),
+            action: overlay::Action::Default,
+            region: (0, 0, area.w, area.h),
+            desktop: area,
+            monitor: mon_rect,
+        };
+        return commands::after_pick(prep, Some(picked));
+    }
+    commands::pick_and_continue(action, commands::CaptureOptions::default())
+}
 
-    // Pick the area on a frozen frame, then record the live screen there.
-    let monitor = platform::monitor_under_cursor().ok_or("no monitor found")?;
-    let mon_rect = crate::capture::monitor_rect(&monitor)?;
-    let (area, size) = match std::env::var("SNAPSMITH_TEST_AREA").ok().and_then(|s| parse_area(&s)) {
-        Some(a) => (a, (a.w, a.h)),
-        None => {
-            let Some(_overlay) = single_instance::acquire(single_instance::OVERLAY)? else { return Ok(()) };
-            let shot = crate::capture::shoot_monitor(&monitor, true)?;
-            match overlay::run(shot, Mode::Area, settings.capture.magnifier, None)? {
-                Some(p) => (p.desktop, p.image.dimensions()),
-                None => return Ok(()),
-            }
-        }
-    };
+/// Records `area` (desktop units) on the monitor at `mon_rect` until stopped, then saves.
+pub fn start(
+    settings: &Settings,
+    format: Format,
+    ffmpeg: Option<PathBuf>,
+    area: DesktopRect,
+    size: (u32, u32),
+    mon_rect: DesktopRect,
+) -> Result<(), String> {
     // xcap wants the area relative to the monitor, in desktop units.
     let rel = (
         (area.x - mon_rect.x).max(0) as u32,
@@ -104,7 +96,7 @@ pub fn command(mp4: bool, stop: bool) -> Result<(), String> {
         return Err("the area is too small to record".into());
     }
 
-    let path = output_path(&settings, format, size.0, size.1);
+    let path = output_path(settings, format, size.0, size.1);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -143,7 +135,7 @@ pub fn command(mp4: bool, stop: bool) -> Result<(), String> {
         return Ok(());
     }
     let first_frame = result?;
-    after_recording(&settings, &path, first_frame, area)
+    after_recording(settings, &path, first_frame, area)
 }
 
 fn parse_area(s: &str) -> Option<DesktopRect> {
@@ -169,10 +161,14 @@ fn output_path(settings: &Settings, format: Format, w: u32, h: u32) -> PathBuf {
     naming::unique(naming::build_path(&settings.capture.save_dir(), &expanded, format.ext()))
 }
 
+/// Finds ffmpeg by looking at files, not by running it, so starting a recording stays quick.
 pub fn find_ffmpeg(settings: &Settings) -> Result<PathBuf, String> {
     let configured = settings.record.ffmpeg.trim();
+    let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
     let candidates: Vec<PathBuf> = if configured.is_empty() {
-        let mut v = vec![PathBuf::from("ffmpeg")];
+        let mut v: Vec<PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).map(|d| d.join(exe)).collect())
+            .unwrap_or_default();
         if cfg!(target_os = "macos") {
             v.push("/opt/homebrew/bin/ffmpeg".into());
             v.push("/usr/local/bin/ffmpeg".into());
@@ -181,13 +177,8 @@ pub fn find_ffmpeg(settings: &Settings) -> Result<PathBuf, String> {
     } else {
         vec![PathBuf::from(configured)]
     };
-    for c in candidates {
-        let mut cmd = Command::new(&c);
-        cmd.arg("-version").stdout(Stdio::null()).stderr(Stdio::null());
-        no_window(&mut cmd);
-        if cmd.status().is_ok_and(|s| s.success()) {
-            return Ok(c);
-        }
+    if let Some(found) = candidates.into_iter().find(|c| std::fs::metadata(c).is_ok_and(|m| m.is_file())) {
+        return Ok(found);
     }
     Err("MP4 recording needs ffmpeg. Install it (it's free), or set its location in Snapsmith's Recording \
          settings. GIF recording works without it."
@@ -421,15 +412,13 @@ fn control_bar(shared: Arc<Shared>, area: DesktopRect, format: Format) -> Result
         .with_always_on_top()
         .with_taskbar(false)
         .with_inner_size(vec2(BAR_W, BAR_H));
-    let options = crate::app::native_options(viewport);
-    eframe::run_native(
-        "Snapsmith - Recording",
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            Ok(Box::new(Bar { shared, area, format, started: Instant::now(), frame_no: 0 }))
-        }),
-    )
+    crate::app::run_window("Snapsmith - Recording", viewport, true, |_cc| Bar {
+        shared: shared.clone(),
+        area,
+        format,
+        started: Instant::now(),
+        frame_no: 0,
+    })
     .map_err(|e| format!("could not show the recording controls: {e}"))
 }
 

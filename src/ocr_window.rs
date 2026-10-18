@@ -27,19 +27,14 @@ pub fn run(image: RgbaImage) -> Result<(), String> {
         .with_inner_size(vec2(520.0, 360.0))
         .with_min_inner_size(vec2(360.0, 220.0))
         .with_always_on_top();
-    let options = crate::app::native_options(viewport);
-    eframe::run_native(
-        "Snapsmith - Text",
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            let mut app = OcrApp { image: Arc::new(image), state: State::AskDownload, frame_no: 0 };
-            if ocr::models_present(&ocr::models_dir()) {
-                app.start_reading(&cc.egui_ctx);
-            }
-            Ok(Box::new(app))
-        }),
-    )
+    let image = Arc::new(image);
+    crate::app::run_window("Snapsmith - Text", viewport, true, |cc| {
+        let mut app = OcrApp { image: image.clone(), state: State::AskDownload, frame_no: 0 };
+        if ocr::models_present(&ocr::models_dir()) {
+            app.start_reading(&cc.egui_ctx);
+        }
+        app
+    })
     .map_err(|e| format!("could not open the text window: {e}"))
 }
 

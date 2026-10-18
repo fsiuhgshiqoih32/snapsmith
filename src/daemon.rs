@@ -62,6 +62,7 @@ pub fn run() -> Result<(), String> {
     let mut tray: Option<Tray> = None;
     let mut mtime = config::mtime(&config_path);
     let mut children: Vec<(HotkeyAction, Child)> = Vec::new();
+    let mut standby = crate::standby::Pool::new();
     let mut last_tick = Instant::now();
     let _lock = lock;
 
@@ -74,16 +75,17 @@ pub fn run() -> Result<(), String> {
                     Ok(t) => tray = Some(t),
                     Err(e) => error!("tray icon unavailable: {e}"),
                 }
+                standby.tick();
             }
             Event::UserEvent(UserEvent::Hotkey(e)) => {
                 if let Some(action) = hotkeys.action_for(e.id, e.state) {
-                    trigger(action, &mut children);
+                    trigger(action, &mut children, &mut standby);
                 }
             }
             Event::UserEvent(UserEvent::Menu(e)) => {
                 let Some(action) = tray.as_ref().and_then(|t| t.action_for(e.id())) else { return };
                 match action {
-                    MenuAction::Run(a) => trigger(a, &mut children),
+                    MenuAction::Run(a) => trigger(a, &mut children, &mut standby),
                     MenuAction::StopRecording => record::request_stop(),
                     MenuAction::OpenWindow => spawn(&["window"]),
                     MenuAction::OpenFolder => {
@@ -124,6 +126,7 @@ pub fn run() -> Result<(), String> {
                     }
                 }
                 children.retain_mut(|(_, c)| matches!(c.try_wait(), Ok(None)));
+                standby.tick();
                 // After an update the main window asks for a restart on the new program file.
                 let restart = config::config_dir().join(RESTART_FILE);
                 if restart.exists() {
@@ -147,7 +150,7 @@ fn sync(tray: &mut Option<Tray>, hotkeys: &Hotkeys, launcher: &Option<auto_launc
     }
 }
 
-fn trigger(action: HotkeyAction, children: &mut Vec<(HotkeyAction, Child)>) {
+fn trigger(action: HotkeyAction, children: &mut Vec<(HotkeyAction, Child)>, standby: &mut crate::standby::Pool) {
     // A recording shortcut while recording stops it.
     if matches!(action, HotkeyAction::RecordGif | HotkeyAction::RecordVideo)
         && single_instance::is_held(single_instance::RECORDING)
@@ -162,6 +165,11 @@ fn trigger(action: HotkeyAction, children: &mut Vec<(HotkeyAction, Child)>) {
         return;
     }
     platform::allow_child_foreground();
+    // The warm standby shows the selection at once; otherwise start from scratch.
+    if let Some(child) = standby.trigger(action.args()) {
+        children.push((action, child));
+        return;
+    }
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => {

@@ -70,6 +70,16 @@ pub fn float_window(window: &winit::window::Window) {
 
 pub fn allow_child_foreground() {}
 
+pub fn tool_window(_window: &winit::window::Window) {}
+
+pub fn place_behind(window: &winit::window::Window, rect: DesktopRect) {
+    super::place(window, rect);
+}
+
+pub fn bring_to_front(window: &winit::window::Window) {
+    window.focus_window();
+}
+
 /// The visible frame (without menu bar and Dock) of the screen containing (x, y), in top-left
 /// points.
 pub(super) fn native_work_area(x: i32, y: i32) -> Option<DesktopRect> {

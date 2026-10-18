@@ -31,15 +31,16 @@ pub fn run(path: &Path, at: Option<DesktopRect>, delete_after_load: bool) -> Res
         .with_taskbar(false)
         .with_resizable(false)
         .with_inner_size(logical);
-    let options = crate::app::native_options(viewport);
-    eframe::run_native(
-        "Snapsmith - Pin",
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            Ok(Box::new(Pin { image, source, at, zoom: 1.0, base_size: logical, texture: None, frame_no: 0 }))
-        }),
-    )
+    let mut image = Some(image);
+    crate::app::run_window("Snapsmith - Pin", viewport, true, |_cc| Pin {
+        image: image.take().expect("pin built once"),
+        source: source.clone(),
+        at,
+        zoom: 1.0,
+        base_size: logical,
+        texture: None,
+        frame_no: 0,
+    })
     .map_err(|e| format!("could not pin the image: {e}"))
 }
 

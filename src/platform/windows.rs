@@ -6,8 +6,10 @@ use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    ASFW_ANY, AllowSetForegroundWindow, GetCursorPos, MB_ICONERROR, MB_OK, MessageBoxW,
+    ASFW_ANY, AllowSetForegroundWindow, GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, MB_ICONERROR, MB_OK, MessageBoxW,
+    SetWindowLongPtrW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::DesktopRect;
 
@@ -40,9 +42,65 @@ pub fn request_screen_capture() -> bool {
     true
 }
 
-pub fn prepare_overlay(_window: &winit::window::Window) {}
+/// No open animation for the selection: it should appear at once, not fade in.
+pub fn prepare_overlay(window: &winit::window::Window) {
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_TRANSITIONS_FORCEDISABLED, DwmSetWindowAttribute};
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::Win32(h) = handle.as_raw() else { return };
+    let hwnd = h.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+    let disabled: i32 = 1;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+            (&disabled as *const i32).cast(),
+            size_of::<i32>() as u32,
+        );
+    }
+}
 
 pub fn float_window(_window: &winit::window::Window) {}
+
+fn hwnd_of(window: &winit::window::Window) -> Option<windows_sys::Win32::Foundation::HWND> {
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::Win32(h) = handle.as_raw() else { return None };
+    Some(h.hwnd.get() as windows_sys::Win32::Foundation::HWND)
+}
+
+/// Moves a window to `rect` underneath every other window, without activating it.
+pub fn place_behind(window: &winit::window::Window, rect: DesktopRect) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{HWND_BOTTOM, SWP_NOACTIVATE, SetWindowPos};
+    let Some(hwnd) = hwnd_of(window) else { return };
+    unsafe {
+        SetWindowPos(hwnd, HWND_BOTTOM, rect.x, rect.y, rect.w as i32, rect.h as i32, SWP_NOACTIVATE);
+    }
+}
+
+/// Raises a window above everything (topmost) and gives it the keyboard.
+pub fn bring_to_front(window: &winit::window::Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowPos,
+    };
+    let Some(hwnd) = hwnd_of(window) else { return };
+    unsafe {
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(hwnd);
+    }
+}
+
+/// Keeps a window out of the taskbar and Alt+Tab (the parked standby window).
+pub fn tool_window(window: &winit::window::Window) {
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::Win32(h) = handle.as_raw() else { return };
+    let hwnd = h.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let wanted = (style | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize);
+        if wanted != style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted);
+        }
+    }
+}
 
 /// The process that received a hotkey may hand foreground rights to the capture process it
 /// starts, so the selection overlay gets the keyboard straight away.

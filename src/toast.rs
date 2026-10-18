@@ -37,15 +37,11 @@ pub fn run(toast: Toast, rx: Receiver<Progress>) -> Result<(), String> {
         .with_taskbar(false)
         .with_active(false)
         .with_inner_size(vec2(W, H));
-    let options = crate::app::native_options(viewport);
-    eframe::run_native(
-        "Snapsmith",
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            Ok(Box::new(ToastApp::new(toast, rx)))
-        }),
-    )
+    let mut parts = Some((toast, rx));
+    crate::app::run_window("Snapsmith", viewport, true, |_cc| {
+        let (toast, rx) = parts.take().expect("notification built once");
+        ToastApp::new(toast, rx)
+    })
     .map_err(|e| format!("could not show the notification: {e}"))
 }
 

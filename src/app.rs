@@ -14,6 +14,7 @@ pub fn native_options_ext(viewport: egui::ViewportBuilder, accessory: bool) -> e
     eframe::NativeOptions {
         viewport: viewport.with_icon(crate::ui::app_icon()),
         centered: false,
+        wgpu_options: fast_wgpu(),
         event_loop_builder: Some(Box::new(move |builder| {
             #[cfg(target_os = "macos")]
             {
@@ -30,8 +31,92 @@ pub fn native_options_ext(viewport: egui::ViewportBuilder, accessory: bool) -> e
     }
 }
 
-pub fn native_options(viewport: egui::ViewportBuilder) -> eframe::NativeOptions {
-    native_options_ext(viewport, true)
+/// Window start-up time is mostly GPU set-up. By default wgpu probes Vulkan, DX12 and OpenGL
+/// drivers and asks for the high-performance GPU (waking a discrete card on laptops); our
+/// windows are simple, so use each system's native API and the power-saving GPU.
+/// `WGPU_BACKEND` and `WGPU_POWER_PREF` still override this.
+fn fast_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup};
+    use eframe::wgpu;
+    let mut config = WgpuConfiguration::default();
+    if let WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
+        if wgpu::Backends::from_env().is_none() {
+            setup.instance_descriptor.backends = if cfg!(windows) {
+                wgpu::Backends::DX12
+            } else if cfg!(target_os = "macos") {
+                wgpu::Backends::METAL
+            } else {
+                wgpu::Backends::VULKAN | wgpu::Backends::GL
+            };
+        }
+        if wgpu::PowerPreference::from_env().is_none() {
+            setup.power_preference = wgpu::PowerPreference::LowPower;
+        }
+    }
+    config
+}
+
+/// Renderers to try, fastest start-up first. On Windows and Linux OpenGL starts in a fraction of
+/// the time DX12/Vulkan takes (drivers cache compiled shaders; wgpu recompiles every launch);
+/// wgpu is the fallback for machines without a usable OpenGL (VMs, remote desktops). macOS uses
+/// Metal through wgpu. `SNAPSMITH_RENDERER=glow|wgpu` overrides.
+fn renderers() -> Vec<eframe::Renderer> {
+    use eframe::Renderer::{Glow, Wgpu};
+    match std::env::var("SNAPSMITH_RENDERER").unwrap_or_default().to_ascii_lowercase().as_str() {
+        "wgpu" => vec![Wgpu],
+        "glow" => vec![Glow, Wgpu],
+        _ if cfg!(target_os = "macos") => vec![Wgpu, Glow],
+        _ => vec![Glow, Wgpu],
+    }
+}
+
+/// Opens a window and runs it until it closes, trying each renderer in turn if one fails to
+/// start. `make` builds the app once the window and renderer exist; it is called again only if
+/// the first renderer failed before the app was built.
+pub fn run_window<A: eframe::App + 'static>(
+    title: &str,
+    viewport: egui::ViewportBuilder,
+    accessory: bool,
+    mut make: impl FnMut(&eframe::CreationContext<'_>) -> A,
+) -> Result<(), String> {
+    run_window_try(title, viewport, accessory, |cc| Ok(make(cc)))
+}
+
+/// [`run_window`] where building the app can fail; the error is returned.
+pub fn run_window_try<A: eframe::App + 'static>(
+    title: &str,
+    viewport: egui::ViewportBuilder,
+    accessory: bool,
+    mut make: impl FnMut(&eframe::CreationContext<'_>) -> Result<A, String>,
+) -> Result<(), String> {
+    let mut last = String::from("no renderer available");
+    for renderer in renderers() {
+        let mut options = native_options_ext(viewport.clone(), accessory);
+        options.renderer = renderer;
+        let created = std::cell::Cell::new(false);
+        let result = eframe::run_native(
+            title,
+            options,
+            Box::new(|cc| {
+                created.set(true);
+                crate::log::timing("window and renderer created");
+                crate::ui::apply_theme(&cc.egui_ctx);
+                match make(cc) {
+                    Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),
+                    Err(e) => Err(e.into()),
+                }
+            }),
+        );
+        match result {
+            Ok(()) => return Ok(()),
+            Err(e) if !created.get() => {
+                crate::log::warning!("{renderer} renderer unavailable ({e}); trying the next one");
+                last = e.to_string();
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err(last)
 }
 
 pub fn save_color_image(img: &egui::ColorImage, path: &Path) -> Result<(), String> {

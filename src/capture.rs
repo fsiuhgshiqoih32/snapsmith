@@ -55,13 +55,47 @@ pub fn shoot_monitor_under_cursor(with_windows: bool) -> Result<Shot, String> {
 pub fn shoot_monitor(monitor: &xcap::Monitor, with_windows: bool) -> Result<Shot, String> {
     let rect = monitor_rect(monitor)?;
     let image = monitor.capture_image().map_err(err)?;
+    crate::log::timing("pixels grabbed");
     let scale = if rect.w > 0 { image.width() as f32 / rect.w as f32 } else { 1.0 };
-    let windows = if with_windows { window_rects(rect, scale) } else { Vec::new() };
+    let windows = if with_windows { to_image_rects(list_windows(rect), rect, scale) } else { Vec::new() };
     Ok(Shot { image, rect, scale, windows })
 }
 
-/// Visible windows overlapping `monitor`, front to back, in that monitor's image pixels.
-fn window_rects(monitor: DesktopRect, scale: f32) -> Vec<WindowRect> {
+/// Captures the monitor at `rect` on a worker thread, so it can run while the overlay window
+/// and its renderer are being created (eframe keeps windows hidden until their first frame).
+/// The monitor is looked up again on the thread because its handle can't cross threads.
+///
+/// Windows are listed right away, on this thread: reading window titles sends messages to each
+/// window, and one sent to the overlay while it's being created would wait for its set-up.
+pub fn shoot_in_background(rect: DesktopRect, with_windows: bool) -> std::thread::JoinHandle<Result<Shot, String>> {
+    let (cx, cy) = rect.center();
+    let listed = if with_windows { list_windows(rect) } else { Vec::new() };
+    std::thread::spawn(move || {
+        let monitor = xcap::Monitor::from_point(cx, cy).map_err(err)?;
+        let image = monitor.capture_image().map_err(err)?;
+        crate::log::timing("screen captured");
+        let scale = if rect.w > 0 { image.width() as f32 / rect.w as f32 } else { 1.0 };
+        let windows = to_image_rects(listed, rect, scale);
+        Ok(Shot { image, rect, scale, windows })
+    })
+}
+
+/// Turns window outlines from desktop units into the shot's image pixels.
+fn to_image_rects(windows: Vec<(DesktopRect, String)>, monitor: DesktopRect, scale: f32) -> Vec<WindowRect> {
+    windows
+        .into_iter()
+        .map(|(r, title)| WindowRect {
+            x: (r.x - monitor.x) as f32 * scale,
+            y: (r.y - monitor.y) as f32 * scale,
+            w: r.w as f32 * scale,
+            h: r.h as f32 * scale,
+            title,
+        })
+        .collect()
+}
+
+/// Visible windows overlapping `monitor`, front to back, clipped to it, in desktop units.
+fn list_windows(monitor: DesktopRect) -> Vec<(DesktopRect, String)> {
     if platform::is_wayland() {
         return Vec::new();
     }
@@ -90,13 +124,8 @@ fn window_rects(monitor: DesktopRect, scale: f32) -> Vec<WindowRect> {
         if x1 - x0 < 8 || y1 - y0 < 8 {
             continue;
         }
-        out.push(WindowRect {
-            x: (x0 - monitor.x) as f32 * scale,
-            y: (y0 - monitor.y) as f32 * scale,
-            w: (x1 - x0) as f32 * scale,
-            h: (y1 - y0) as f32 * scale,
-            title: w.title().unwrap_or_default(),
-        });
+        let clipped = DesktopRect { x: x0, y: y0, w: (x1 - x0) as u32, h: (y1 - y0) as u32 };
+        out.push((clipped, w.title().unwrap_or_default()));
     }
     out
 }

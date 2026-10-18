@@ -84,15 +84,10 @@ fn run(page: Page, demo: Option<PathBuf>, lock: single_instance::InstanceLock) -
         .with_inner_size(vec2(980.0, 640.0))
         .with_min_inner_size(vec2(720.0, 460.0))
         .with_drag_and_drop(true);
-    let options = crate::app::native_options_ext(viewport, false);
-    eframe::run_native(
-        "Snapsmith",
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            Ok(Box::new(MainWindow::new(cc, page, demo, lock)))
-        }),
-    )
+    let mut lock = Some(lock);
+    crate::app::run_window("Snapsmith", viewport, false, |cc| {
+        MainWindow::new(cc, page, demo.clone(), lock.take().expect("window built once"))
+    })
     .map_err(|e| format!("could not open the window: {e}"))
 }
 
@@ -140,6 +135,7 @@ struct MainWindow {
     ffmpeg_status: Option<Result<PathBuf, String>>,
 
     pending_capture: Option<(Vec<&'static str>, Instant)>,
+    standby: crate::standby::Pool,
     running: Option<Child>,
     toast: Option<(String, f64)>,
 
@@ -205,6 +201,7 @@ impl MainWindow {
             update: None,
             ffmpeg_status: None,
             pending_capture: None,
+            standby: crate::standby::Pool::new(),
             running: None,
             toast: None,
             demo,
@@ -290,15 +287,20 @@ impl MainWindow {
             if let Some(p) = std::fs::read_to_string(&raise).ok().as_deref().and_then(Page::parse) {
                 self.page = p;
             }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         self.hotkey_status = hotkey::read_status();
+    }
+
+    /// Brings the window back once the capture it started has finished.
+    fn check_running(&mut self, ctx: &egui::Context) {
         if let Some(c) = &mut self.running
             && !matches!(c.try_wait(), Ok(None))
         {
             self.running = None;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
     }
@@ -307,18 +309,25 @@ impl MainWindow {
         self.edited_at = Some(Instant::now());
     }
 
-    /// Hides the window, then starts a capture once it's out of the way.
+    /// Hides the window (instantly; minimising animates), then starts the capture, which freezes
+    /// the screen without this window on it.
     fn start_capture(&mut self, ctx: &egui::Context, args: Vec<&'static str>) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         self.pending_capture = Some((args, Instant::now()));
+        ctx.request_repaint_after(Duration::from_millis(60));
     }
 
     fn run_pending(&mut self) {
         if let Some((args, at)) = &self.pending_capture
-            && at.elapsed() > Duration::from_millis(350)
+            && at.elapsed() > Duration::from_millis(60)
         {
             let args = args.clone();
             self.pending_capture = None;
+            crate::platform::allow_child_foreground();
+            if let Some(c) = self.standby.trigger(&args) {
+                self.running = Some(c);
+                return;
+            }
             match crate::app::spawn_self(&args) {
                 Ok(c) => self.running = Some(c),
                 Err(e) => warning!("{e}"),
@@ -1046,11 +1055,33 @@ fn file_kind(p: &Path) -> String {
 }
 
 impl eframe::App for MainWindow {
+    /// Runs while the window is hidden for a capture, too.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll(ctx);
+        self.run_pending();
+        self.standby.tick();
+        self.check_running(ctx);
+        if self.pending_capture.is_some() || self.running.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(60));
+        }
+        if let Some(action) = std::env::var("SNAPSMITH_TEST_CLICK").ok().filter(|_| self.frame_no == 15) {
+            // For timing tests: press a capture button without a user.
+            self.frame_no += 1;
+            let args: Vec<&'static str> = match action.as_str() {
+                "record-gif" => vec!["record", "--gif"],
+                "region" => vec!["capture", "region"],
+                _ => Vec::new(),
+            };
+            if !args.is_empty() {
+                crate::log::timing("main window: capture button");
+                self.start_capture(ctx, args);
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.frame_no += 1;
-        self.poll(&ctx);
-        self.run_pending();
 
         egui::Panel::top("top").show(ui, |ui| {
             ui.add_space(6.0);

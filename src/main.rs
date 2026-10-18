@@ -19,6 +19,7 @@ mod platform;
 mod record;
 mod selftest;
 mod single_instance;
+mod standby;
 mod tasks;
 mod toast;
 mod tray;
@@ -117,6 +118,8 @@ enum Command {
     /// Print where the settings file is.
     ConfigPath,
     #[command(hide = true)]
+    Standby,
+    #[command(hide = true)]
     Clipboard {
         #[arg(long)]
         image: Option<PathBuf>,
@@ -152,8 +155,24 @@ fn parse_rect(s: &str) -> Result<DesktopRect, String> {
 }
 
 fn main() {
+    log::timing("start");
     platform::init_process();
     let cli = Cli::parse();
+    // Commands started from the tray or a shortcut have no terminal: show their errors.
+    let windowed = !cli.self_test
+        && cli.demo_shots.is_none()
+        && matches!(
+            cli.command,
+            None | Some(
+                Command::Capture { .. }
+                    | Command::Standby
+                    | Command::Record { .. }
+                    | Command::Ocr { .. }
+                    | Command::Edit { .. }
+                    | Command::Pin { .. }
+                    | Command::Window { .. }
+            )
+        );
     let result = if cli.self_test {
         selftest::run()
     } else if let Some(dir) = &cli.demo_shots {
@@ -180,11 +199,15 @@ fn main() {
                 Ok(())
             }
             Some(Command::Clipboard { image, text }) => clipboard::hold(image.as_deref(), text),
+            Some(Command::Standby) => standby::run(),
         }
     };
     if let Err(e) = result {
         error!("{e}");
         eprintln!("snapsmith: {e}");
+        if windowed {
+            commands::show_errors("Snapsmith", &[e], platform::cursor_pos(), &commands::load_settings());
+        }
         std::process::exit(1);
     }
 }

@@ -34,6 +34,16 @@ pub fn float_window(_window: &winit::window::Window) {}
 
 pub fn allow_child_foreground() {}
 
+pub fn tool_window(_window: &winit::window::Window) {}
+
+pub fn place_behind(window: &winit::window::Window, rect: DesktopRect) {
+    super::place(window, rect);
+}
+
+pub fn bring_to_front(window: &winit::window::Window) {
+    window.focus_window();
+}
+
 pub(super) fn native_work_area(_x: i32, _y: i32) -> Option<DesktopRect> {
     None
 }

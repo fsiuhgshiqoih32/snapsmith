@@ -36,30 +36,25 @@ pub fn run(
         .with_app_id("snapsmith")
         .with_inner_size(size)
         .with_min_inner_size(vec2(640.0, 360.0));
-    let options = crate::app::native_options_ext(viewport, false);
-    eframe::run_native(
-        &title,
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            let mut canvas = Canvas::new(Arc::new(image), cc.egui_ctx.pixels_per_point());
-            canvas.nearest = false;
-            Ok(Box::new(Editor {
-                canvas,
-                source,
-                settings,
-                result: out,
-                zoom: None,
-                pan: vec2(0.0, 0.0),
-                crop: None,
-                crop_tool: false,
-                crop_drag: None,
-                status: None,
-                closing: false,
-                frame_no: 0,
-            }))
-        }),
-    )
+    let image = Arc::new(image);
+    crate::app::run_window(&title, viewport, false, |cc| {
+        let mut canvas = Canvas::new(image.clone(), cc.egui_ctx.pixels_per_point());
+        canvas.nearest = false;
+        Editor {
+            canvas,
+            source: source.clone(),
+            settings: settings.clone(),
+            result: out.clone(),
+            zoom: None,
+            pan: vec2(0.0, 0.0),
+            crop: None,
+            crop_tool: false,
+            crop_drag: None,
+            status: None,
+            closing: false,
+            frame_no: 0,
+        }
+    })
     .map_err(|e| format!("could not open the editor: {e}"))?;
     let r = result.lock().unwrap().take();
     Ok(r)

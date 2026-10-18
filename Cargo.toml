@@ -1,6 +1,6 @@
 [package]
 name = "snapsmith"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
 description = "Screenshots, annotation, uploads, OCR and GIF recording for Windows, macOS and Linux. ShareX-style workflows, .sxcu uploaders."
@@ -18,11 +18,12 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
-eframe = "0.37"
+eframe = { version = "0.37", features = ["glow"] }
 epaint_default_fonts = "0.37"
 fastrand = "2"
 flate2 = "1"
 gif = "0.14"
+log = "0.4"
 global-hotkey = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp"] }
 ocrs = "0.13"
@@ -47,6 +48,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_HiDpi",

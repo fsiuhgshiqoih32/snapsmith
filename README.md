@@ -140,6 +140,11 @@ Everything is in one TOML file; `snapsmith config-path` prints where. The window
 file and the tray picks up changes within a second. Setting `SNAPSMITH_HOME` keeps settings,
 history and default saves in one folder, for a portable copy.
 
+On Windows, Snapsmith keeps one small hidden window ready so the selection appears the moment
+you press a shortcut (about a tenth of a second). Set `SNAPSMITH_STANDBY=0` to turn that off, or
+`SNAPSMITH_STANDBY=1` to try it on macOS or Linux (X11). Windows open with OpenGL and fall back
+to wgpu; `SNAPSMITH_RENDERER=wgpu` forces wgpu.
+
 ## Building
 
 Rust 1.95 or newer.
@@ -158,7 +163,9 @@ sudo apt install libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libxkbcomm
 
 `cargo test` runs the unit and integration tests (uploads are tested against a local server).
 `snapsmith --self-test` opens the real windows with a scripted selection, which is what CI runs on
-all three systems. `cargo run --example make_icons` regenerates the icons.
+all three systems. `cargo run --example make_icons` regenerates the icons, and
+`cargo run --release --example startup_probe -- target/release/snapsmith standby` measures how
+fast the selection appears on screen. `SNAPSMITH_TIMING=1` prints a start-up timeline.
 
 ## Limitations
 

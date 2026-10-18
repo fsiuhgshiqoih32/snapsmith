@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.1
+
+- Much faster start. On Windows the selection now appears about a tenth of a second after a
+  shortcut (about a third of a second when started from scratch), instead of one to two
+  seconds. macOS and Linux get the same changes except the waiting window; they were not
+  timed.
+  - Windows open with OpenGL, which starts several times faster than DX12/Vulkan here; wgpu is
+    still used automatically where OpenGL isn't available.
+  - The screen is captured while the window opens, and ffmpeg is found without starting it.
+  - On Windows a small hidden window waits ready, so shortcuts and the main window's buttons
+    don't start from scratch (`SNAPSMITH_STANDBY=0` turns this off).
+  - The main window hides at once instead of minimising first.
+- Errors from shortcuts and the tray (MP4 recording without ffmpeg, say) now show a
+  notification instead of failing silently.
+
 ## 0.1.0
 
 First release, for Windows (x64 and ARM64), macOS (Apple silicon and Intel) and Linux (x86_64).

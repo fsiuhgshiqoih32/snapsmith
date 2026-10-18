@@ -44,6 +44,8 @@ pub struct Picked {
     pub region: (u32, u32, u32, u32),
     /// The selection on the desktop.
     pub desktop: DesktopRect,
+    /// The monitor the selection was made on.
+    pub monitor: DesktopRect,
 }
 
 /// For the self-test and README screenshots: select, annotate and confirm without a user.
@@ -55,10 +57,36 @@ pub struct Script {
 }
 
 /// Shows the overlay and waits. `Ok(None)` if the user cancelled.
+/// A frozen screen, or one still being captured.
+pub enum Source {
+    Ready(Shot),
+    Capturing(std::thread::JoinHandle<Result<Shot, String>>),
+}
+
+impl Source {
+    fn get(self) -> Result<Shot, String> {
+        match self {
+            Source::Ready(s) => Ok(s),
+            Source::Capturing(h) => h.join().map_err(|_| "screen capture crashed".to_string())?,
+        }
+    }
+}
+
 pub fn run(shot: Shot, mode: Mode, magnifier: bool, script: Option<Script>) -> Result<Option<Picked>, String> {
+    let rect = shot.rect;
+    run_source(rect, Source::Ready(shot), mode, magnifier, script)
+}
+
+/// Opens the overlay for the monitor at `rect` while its capture may still be running.
+pub fn run_source(
+    rect: DesktopRect,
+    source: Source,
+    mode: Mode,
+    magnifier: bool,
+    script: Option<Script>,
+) -> Result<Option<Picked>, String> {
     let result: Arc<Mutex<Option<Picked>>> = Arc::default();
     let out = result.clone();
-    let rect = shot.rect;
     // A first guess at the monitor in logical points; the first frame puts it exactly in place.
     let monitor_scale = if cfg!(target_os = "macos") { 1.0 } else { scale_of(rect) };
     let viewport = egui::ViewportBuilder::default()
@@ -71,15 +99,12 @@ pub fn run(shot: Shot, mode: Mode, magnifier: bool, script: Option<Script>) -> R
         .with_has_shadow(false)
         .with_position(pos2(rect.x as f32 / monitor_scale, rect.y as f32 / monitor_scale))
         .with_inner_size(vec2(rect.w as f32 / monitor_scale, rect.h as f32 / monitor_scale));
-    let options = crate::app::native_options(viewport);
-    eframe::run_native(
-        "Snapsmith",
-        options,
-        Box::new(move |cc| {
-            ui::apply_theme(&cc.egui_ctx);
-            Ok(Box::new(Overlay::new(shot, mode, magnifier, script, out)))
-        }),
-    )
+    crate::log::timing("overlay starting");
+    let mut source = Some(source);
+    crate::app::run_window_try("Snapsmith", viewport, true, |_cc| {
+        let shot = source.take().ok_or("overlay built twice")?.get()?;
+        Ok(Overlay::new(shot, mode, magnifier, script.clone(), out.clone()))
+    })
     .map_err(|e| format!("could not open the capture window: {e}"))?;
     let picked = result.lock().unwrap().take();
     Ok(picked)
@@ -152,8 +177,13 @@ enum SelDrag {
     Resize { handle: Handle },
 }
 
-struct Overlay {
+pub struct Overlay {
     rect: DesktopRect,
+    /// Cover the monitor on the first frame (a fresh window). The standby places it itself.
+    pub self_place: bool,
+    /// Show only the frozen picture, undimmed and without tools: indistinguishable from the
+    /// screen itself, which lets the standby get a window on screen before raising it.
+    pub plain: bool,
     scale: f32,
     windows: Vec<WindowRect>,
     canvas: Canvas,
@@ -171,7 +201,12 @@ struct Overlay {
 }
 
 impl Overlay {
-    fn new(
+    /// The monitor this overlay covers, in desktop units.
+    pub fn monitor_rect(&self) -> DesktopRect {
+        self.rect
+    }
+
+    pub fn new(
         shot: Shot,
         mode: Mode,
         magnifier: bool,
@@ -194,6 +229,8 @@ impl Overlay {
             drag: None,
             hover_window: None,
             closing: false,
+            self_place: true,
+            plain: false,
             copied_color: None,
             screenshot_pending: false,
         }
@@ -231,7 +268,7 @@ impl Overlay {
             w: (region.2 as f32 / self.scale).round().max(1.0) as u32,
             h: (region.3 as f32 / self.scale).round().max(1.0) as u32,
         };
-        *self.result.lock().unwrap() = Some(Picked { image, action, region, desktop });
+        *self.result.lock().unwrap() = Some(Picked { image, action, region, desktop, monitor: self.rect });
         self.close(ctx);
     }
 
@@ -687,7 +724,20 @@ fn tag(painter: &egui::Painter, pos: Pos2, align: egui::Align2, text: &str) {
 impl eframe::App for Overlay {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.frame_no < 3 {
+            crate::log::timing(&format!("overlay frame {}", self.frame_no));
+        }
+        if self.frame_no == 4 && std::env::var_os("SNAPSMITH_TIMING_EXIT").is_some() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if self.plain {
+            let screen = ctx.viewport_rect();
+            let view = View { origin: screen.min, zoom: screen.width() / self.canvas.width().max(1) as f32 };
+            self.canvas.paint_image(ui, view);
+            return;
+        }
         if self.frame_no == 0
+            && self.self_place
             && let Some(w) = frame.winit_window()
         {
             platform::cover_monitor(w, self.rect);

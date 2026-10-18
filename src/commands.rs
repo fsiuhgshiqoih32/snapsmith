@@ -12,6 +12,7 @@ use crate::capture;
 use crate::log::{info, warning};
 use crate::overlay::{self, Action, Mode};
 use crate::platform::{self, DesktopRect};
+use crate::record;
 use crate::single_instance;
 use crate::tasks::{self, Job, Progress};
 use crate::toast::{self, Toast};
@@ -59,7 +60,112 @@ fn ensure_permission() -> Result<(), String> {
         .into())
 }
 
+/// The commands that start with picking an area on a frozen screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AreaAction {
+    Region,
+    Ocr,
+    Record(record::Format),
+}
+
+impl AreaAction {
+    /// From command-line words: `capture region`, `ocr`, `record --gif`, `record --mp4`.
+    pub fn parse(words: &[&str]) -> Option<Self> {
+        match words {
+            ["capture"] | ["capture", "region"] => Some(AreaAction::Region),
+            ["ocr"] => Some(AreaAction::Ocr),
+            ["record"] | ["record", "--gif"] => Some(AreaAction::Record(record::Format::Gif)),
+            ["record", "--mp4"] => Some(AreaAction::Record(record::Format::Mp4)),
+            _ => None,
+        }
+    }
+
+    pub fn mode(self) -> Mode {
+        match self {
+            AreaAction::Region => Mode::Capture,
+            AreaAction::Ocr | AreaAction::Record(_) => Mode::Area,
+        }
+    }
+}
+
+/// What was checked and claimed before the selection appeared.
+pub struct Prepared {
+    pub action: AreaAction,
+    pub settings: Settings,
+    opts: CaptureOptions,
+    ffmpeg: Option<PathBuf>,
+    overlay_lock: single_instance::InstanceLock,
+    recording_lock: Option<single_instance::InstanceLock>,
+}
+
+/// Everything that can fail before the selection appears, so it fails before, not after.
+/// `Ok(None)` means there's nothing to do (a selection is already open, or this stopped a
+/// recording).
+pub fn prepare(action: AreaAction, opts: CaptureOptions) -> Result<Option<Prepared>, String> {
+    let recording_lock = match action {
+        AreaAction::Record(_) => {
+            // Starting a recording while one runs stops it instead.
+            match single_instance::acquire(single_instance::RECORDING)? {
+                Some(l) => {
+                    let _ = std::fs::remove_file(record::stop_file());
+                    Some(l)
+                }
+                None => {
+                    record::request_stop();
+                    return Ok(None);
+                }
+            }
+        }
+        _ => None,
+    };
+    let settings = load_settings();
+    crate::log::timing("settings loaded");
+    if matches!(action, AreaAction::Record(_)) && platform::is_wayland() {
+        return Err("Screen recording isn't available on Wayland yet: the desktop asks for permission on every \
+                    frame. It works in an X11 session."
+            .into());
+    }
+    ensure_permission()?;
+    let ffmpeg = match action {
+        AreaAction::Record(record::Format::Mp4) => Some(record::find_ffmpeg(&settings)?),
+        _ => None,
+    };
+    let Some(overlay_lock) = single_instance::acquire(single_instance::OVERLAY)? else {
+        info!("a selection is already open");
+        return Ok(None);
+    };
+    Ok(Some(Prepared { action, settings, opts, ffmpeg, overlay_lock, recording_lock }))
+}
+
+/// Everything after the selection closes.
+pub fn after_pick(prep: Prepared, picked: Option<overlay::Picked>) -> Result<(), String> {
+    let Prepared { action, settings, opts, ffmpeg, overlay_lock, recording_lock } = prep;
+    drop(overlay_lock);
+    let Some(p) = picked else { return Ok(()) };
+    match action {
+        AreaAction::Region => finish_action(p.image, p.action, &settings, Some(p.desktop), String::new(), &opts),
+        AreaAction::Ocr => crate::ocr_window::run(p.image),
+        AreaAction::Record(format) => {
+            let _recording = recording_lock;
+            record::start(&settings, format, ffmpeg, p.desktop, p.image.dimensions(), p.monitor)
+        }
+    }
+}
+
+/// Prepares, opens a new selection window, and carries on.
+pub fn pick_and_continue(action: AreaAction, opts: CaptureOptions) -> Result<(), String> {
+    let Some(prep) = prepare(action, opts)? else { return Ok(()) };
+    let monitor = platform::monitor_under_cursor().ok_or("no monitor found")?;
+    let rect = capture::monitor_rect(&monitor)?;
+    let pending = overlay::Source::Capturing(capture::shoot_in_background(rect, true));
+    let picked = overlay::run_source(rect, pending, action.mode(), prep.settings.capture.magnifier, None)?;
+    after_pick(prep, picked)
+}
+
 pub fn capture(kind: CaptureKind, opts: CaptureOptions) -> Result<(), String> {
+    if kind == CaptureKind::Region {
+        return pick_and_continue(AreaAction::Region, opts);
+    }
     let settings = load_settings();
     ensure_permission()?;
     let delay = opts.delay.unwrap_or(if kind == CaptureKind::Region { 0.0 } else { settings.capture.delay });
@@ -68,17 +174,7 @@ pub fn capture(kind: CaptureKind, opts: CaptureOptions) -> Result<(), String> {
     }
     let anchor = platform::cursor_pos();
     let (image, title) = match kind {
-        CaptureKind::Region => {
-            let Some(_lock) = single_instance::acquire(single_instance::OVERLAY)? else {
-                info!("a capture is already open");
-                return Ok(());
-            };
-            let shot = capture::shoot_monitor_under_cursor(true)?;
-            let picked = overlay::run(shot, Mode::Capture, settings.capture.magnifier, None)?;
-            drop(_lock);
-            let Some(p) = picked else { return Ok(()) };
-            return finish_action(p.image, p.action, &settings, Some(p.desktop), String::new(), &opts);
-        }
+        CaptureKind::Region => unreachable!("handled above"),
         CaptureKind::Screen => (capture::shoot_all()?, String::new()),
         CaptureKind::Monitor => (capture::shoot_monitor_under_cursor(false)?.image, String::new()),
         CaptureKind::Window => capture::shoot_active_window()?,
@@ -216,19 +312,13 @@ pub fn pin(image: &RgbaImage, at: Option<DesktopRect>) -> Result<(), String> {
 
 /// `snapsmith ocr [file]`: read text from a file, or from an area picked on screen.
 pub fn ocr(file: Option<&Path>) -> Result<(), String> {
-    let image = match file {
-        Some(p) => image::open(p).map_err(|e| format!("could not open {}: {e}", p.display()))?.to_rgba8(),
-        None => {
-            let settings = load_settings();
-            ensure_permission()?;
-            let shot = capture::shoot_monitor_under_cursor(true)?;
-            match overlay::run(shot, Mode::Area, settings.capture.magnifier, None)? {
-                Some(p) => p.image,
-                None => return Ok(()),
-            }
+    match file {
+        Some(p) => {
+            let image = image::open(p).map_err(|e| format!("could not open {}: {e}", p.display()))?.to_rgba8();
+            crate::ocr_window::run(image)
         }
-    };
-    crate::ocr_window::run(image)
+        None => pick_and_continue(AreaAction::Ocr, CaptureOptions::default()),
+    }
 }
 
 /// `snapsmith edit <file>`.
